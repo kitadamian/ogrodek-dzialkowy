@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ogródek Działkowy - Gra Edukacyjna</title>
+    <!-- Tailwind CSS z konfiguracją darkMode -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class'
+        }
+    </script>
+    <!-- React & ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Babel dla JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @keyframes bounce-short {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-5px); }
+        }
+        .animate-bounce-short {
+            animation: bounce-short 1.5s ease-in-out infinite;
+        }
+        /* Custom scrollbar dla listy nasion */
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #d1d5db;
+            border-radius: 10px;
+        }
+        .dark .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #4b5563;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // --- Ikonki Lucide jako komponenty funkcyjne ---
+        const Icon = ({ name, size = 20, className = "" }) => {
+            const ref = useRef(null);
+            useEffect(() => {
+                if (window.lucide) {
+                    window.lucide.createIcons();
+                }
+            }, [name]);
+            return <i data-lucide={name} style={{ width: size, height: size }} className={className}></i>;
+        };
+
+        // --- BAZA WIEDZY ---
+        const PLANTS = {
+            carrot: {
+                id: 'carrot', name: 'Marchew', emoji: '🥕', sproutEmoji: '🌱', price: 10, growTime: 7,
+                plantSeasons: ['Wiosna', 'Lato'], harvestSeasons: ['Lato', 'Jesień'],
+                eduText: 'Marchew jest bogata w beta-karoten. Najlepiej rośnie w spulchnionej glebie.'
+            },
+            tomato: {
+                id: 'tomato', name: 'Pomidor', emoji: '🍅', sproutEmoji: '🌿', price: 15, growTime: 12,
+                plantSeasons: ['Wiosna'], harvestSeasons: ['Lato', 'Jesień'],
+                eduText: 'Pomidor jest ciepłolubny. Wymaga dużo słońca i regularnego podlewania.'
+            },
+            sunflower: {
+                id: 'sunflower', name: 'Słonecznik', emoji: '🌻', sproutEmoji: '🌱', price: 20, growTime: 15,
+                plantSeasons: ['Wiosna'], harvestSeasons: ['Lato', 'Jesień'],
+                eduText: 'Słonecznik podąża za słońcem. Jego nasiona są źródłem zdrowych tłuszczów.'
+            },
+            pumpkin: {
+                id: 'pumpkin', name: 'Dynia', emoji: '🎃', sproutEmoji: '🌿', price: 25, growTime: 20,
+                plantSeasons: ['Wiosna'], harvestSeasons: ['Jesień'],
+                eduText: 'Dynia potrzebuje dużo wody i miejsca. Jej owoce można długo przechowywać.'
+            },
+            garlic: {
+                id: 'garlic', name: 'Czosnek', emoji: '🧄', sproutEmoji: '🧄', price: 30, growTime: 25,
+                plantSeasons: ['Jesień'], harvestSeasons: ['Lato'],
+                eduText: 'Czosnek to naturalny antybiotyk. Sadzony jesienią plonuje latem.'
+            }
+        };
+
+        const SEASONS = ['Wiosna', 'Lato', 'Jesień', 'Zima'];
+        const DAYS_PER_SEASON = 30;
+        const BASE_TICK_RATE = 2000;
+
+        // --- ZAAWANSOWANY SYSTEM AUDIO ---
+        class SoundEngine {
+            constructor() {
+                this.ctx = null;
+                this.isPlaying = false;
+                this.bgmInterval = null;
+                this.currentSpeed = 1;
+                this.masterGain = null;
+            }
+
+            init() {
+                if (!this.ctx) {
+                    this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+                    this.masterGain = this.ctx.createGain();
+                    this.masterGain.gain.setValueAtTime(0.5, this.ctx.currentTime);
+                    this.masterGain.connect(this.ctx.destination);
+                }
+                if (this.ctx.state === 'suspended') this.ctx.resume();
+            }
+
+            playTone(freq, type, duration, vol = 0.1, fadeOut = true) {
+                if (!this.ctx || !this.isPlaying) return;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                
+                osc.type = type;
+                osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
+                
+                gain.gain.setValueAtTime(vol, this.ctx.currentTime);
+                if (fadeOut) {
+                    gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + duration);
+                }
+                
+                osc.connect(gain);
+                gain.connect(this.masterGain);
+                
+                osc.start();
+                osc.stop(this.ctx.currentTime + duration);
+            }
+
+            playPlant() {
+                this.playTone(150, 'triangle', 0.2, 0.15);
+            }
+
+            playWater() {
+                this.init();
+                const now = this.ctx.currentTime;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.frequency.setValueAtTime(400, now);
+                osc.frequency.exponentialRampToValueAtTime(800, now + 0.1);
+                gain.gain.setValueAtTime(0.1, now);
+                gain.gain.linearRampToValueAtTime(0, now + 0.1);
+                osc.connect(gain);
+                gain.connect(this.masterGain);
+                osc.start();
+                osc.stop(now + 0.1);
+            }
+
+            playHarvest() {
+                this.init();
+                const now = this.ctx.currentTime;
+                [440, 554, 659].forEach((f, i) => {
+                    setTimeout(() => this.playTone(f, 'sine', 0.3, 0.05), i * 60);
+                });
+            }
+
+            playError() {
+                this.playTone(100, 'sawtooth', 0.2, 0.05);
+            }
+
+            updateSpeed(speed) {
+                this.currentSpeed = speed;
+                if (this.isPlaying) {
+                    this.stopBGM();
+                    this.startBGM();
+                }
+            }
+
+            startBGM() {
+                this.init();
+                this.isPlaying = true;
+                const melody = [
+                    261.63, 329.63, 392.00, 329.63,
+                    293.66, 349.23, 440.00, 349.23,
+                    329.63, 392.00, 493.88, 392.00,
+                    349.23, 440.00, 523.25, 440.00
+                ];
+                let step = 0;
+                const tempo = 400 / Math.sqrt(this.currentSpeed);
+                
+                this.bgmInterval = setInterval(() => {
+                    this.playTone(melody[step % melody.length], 'sine', 0.6, 0.02);
+                    step++;
+                }, tempo);
+            }
+
+            stopBGM() {
+                this.isPlaying = false;
+                if (this.bgmInterval) {
+                    clearInterval(this.bgmInterval);
+                    this.bgmInterval = null;
+                }
+            }
+        }
+
+        const sfx = new SoundEngine();
+
+        function App() {
+            const [seasonIndex, setSeasonIndex] = useState(0);
+            const [day, setDay] = useState(1);
+            const [money, setMoney] = useState(50);
+            const [audioEnabled, setAudioEnabled] = useState(false);
+            const [darkMode, setDarkMode] = useState(false);
+            const [gameSpeed, setGameSpeed] = useState(1);
+            const [activeTool, setActiveTool] = useState('water');
+            const [infoText, setInfoText] = useState('Witaj w Ogródku! Wybierz nasiona lub narzędzie.');
+            const [eduTitle, setEduTitle] = useState('Poradnik');
+            const [plots, setPlots] = useState(Array(9).fill({ plantId: null, growth: 0, watered: false, dead: false }));
+
+            const plotsRef = useRef(plots);
+            const seasonIndexRef = useRef(seasonIndex);
+            plotsRef.current = plots;
+            seasonIndexRef.current = seasonIndex;
+
+            useEffect(() => {
+                const timer = setInterval(() => {
+                    setDay(prevDay => {
+                        let nextDay = prevDay + 1;
+                        let nextSeasonIdx = seasonIndexRef.current;
+                        if (nextDay > DAYS_PER_SEASON) {
+                            nextDay = 1;
+                            nextSeasonIdx = (nextSeasonIdx + 1) % 4;
+                            setSeasonIndex(nextSeasonIdx);
+                        }
+                        const currentSeason = SEASONS[nextSeasonIdx];
+                        const newPlots = plotsRef.current.map(plot => {
+                            if (!plot.plantId || plot.dead) return plot;
+                            let newGrowth = plot.watered ? plot.growth + 1 : plot.growth;
+                            let newDead = (currentSeason === 'Zima' && plot.plantId !== 'garlic') ? true : plot.dead;
+                            return { ...plot, growth: newGrowth, watered: false, dead: newDead };
+                        });
+                        setPlots(newPlots);
+                        return nextDay;
+                    });
+                }, BASE_TICK_RATE / gameSpeed);
+                return () => clearInterval(timer);
+            }, [gameSpeed]);
+
+            useEffect(() => {
+                sfx.updateSpeed(gameSpeed);
+                if (audioEnabled) {
+                    sfx.startBGM();
+                } else {
+                    sfx.stopBGM();
+                }
+            }, [audioEnabled, gameSpeed]);
+
+            const handlePlotClick = (index) => {
+                const plot = plots[index];
+                let newPlots = [...plots];
+
+                if (activeTool === 'water') {
+                    if (plot.plantId && !plot.dead && !plot.watered) {
+                        newPlots[index] = { ...plot, watered: true };
+                        setPlots(newPlots);
+                        sfx.playWater();
+                    }
+                } else if (activeTool === 'harvest') {
+                    if (plot.plantId) {
+                        const plantDef = PLANTS[plot.plantId];
+                        if (plot.growth >= plantDef.growTime && !plot.dead) {
+                            setMoney(m => m + plantDef.price * 2);
+                            setInfoText(`Zebrałeś: ${plantDef.name}!`);
+                            sfx.playHarvest();
+                        }
+                        newPlots[index] = { plantId: null, growth: 0, watered: false, dead: false };
+                        setPlots(newPlots);
+                    }
+                } else if (PLANTS[activeTool]) {
+                    const plantDef = PLANTS[activeTool];
+                    if (!plot.plantId && money >= plantDef.price) {
+                        setMoney(m => m - plantDef.price);
+                        newPlots[index] = { plantId: activeTool, growth: 0, watered: false, dead: false };
+                        setPlots(newPlots);
+                        setInfoText(plantDef.eduText);
+                        setEduTitle(plantDef.name);
+                        sfx.playPlant();
+                    } else if (!plot.plantId) {
+                        setInfoText("Brak środków na nasiona!");
+                        sfx.playError();
+                    }
+                }
+            };
+
+            const getSeasonClass = () => {
+                const colors = ['bg-emerald-600', 'bg-yellow-500', 'bg-orange-600', 'bg-blue-300'];
+                const darkColors = ['dark:bg-emerald-800', 'dark:bg-yellow-700', 'dark:bg-orange-800', 'dark:bg-blue-800'];
+                return `${colors[seasonIndex]} ${darkColors[seasonIndex]}`;
+            };
+
+            return (
+                <div className={`${darkMode ? 'dark' : ''} transition-colors duration-500`}>
+                    <div className="min-h-screen flex flex-col items-center p-4 bg-stone-100 dark:bg-stone-900 text-stone-900 dark:text-stone-100 transition-colors duration-500">
+                        <div className="w-full max-w-2xl bg-white dark:bg-stone-800 rounded-2xl shadow-xl overflow-hidden transition-colors duration-500">
+                            {/* Header */}
+                            <div className={`${getSeasonClass()} p-4 flex justify-between items-center text-white transition-colors duration-1000`}>
+                                <div className="flex items-center gap-2">
+                                    <Icon name="leaf" />
+                                    <h1 className="font-bold text-lg">Ogródek Działkowy</h1>
+                                </div>
+                                <div className="flex gap-2">
+                                    <button onClick={() => setGameSpeed(s => s === 5 ? 1 : (s === 1 ? 2 : 5))} className="p-2 bg-white/20 hover:bg-white/30 rounded-full flex items-center gap-1 transition-colors">
+                                        <Icon name="fast-forward" size={16} /> <span className="text-xs">{gameSpeed}x</span>
+                                    </button>
+                                    <button onClick={() => setDarkMode(!darkMode)} title={darkMode ? "Włącz tryb jasny" : "Włącz tryb ciemny"} className="p-2 bg-white/20 hover:bg-white/30 rounded-full transition-colors">
+                                        <Icon name={darkMode ? 'sun' : 'moon'} size={18} />
+                                    </button>
+                                    <button onClick={() => setAudioEnabled(!audioEnabled)} className="p-2 bg-white/20 hover:bg-white/30 rounded-full transition-colors">
+                                        <Icon name={audioEnabled ? 'volume-2' : 'volume-x'} size={18} />
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            {/* Status Bar */}
+                            <div className="p-4 flex justify-between border-b border-stone-200 dark:border-stone-700">
+                                <span className="font-medium">{SEASONS[seasonIndex]} - Dzień {day}</span>
+                                <span className="font-bold text-yellow-600 dark:text-yellow-400">🪙 {money}</span>
+                            </div>
+
+                            {/* Game Body */}
+                            <div className="p-4 grid grid-cols-1 md:grid-cols-3 gap-4">
+                                {/* Garden Plots */}
+                                <div className="md:col-span-2 aspect-square bg-[#8B5A2B] dark:bg-[#5D3A1B] rounded-xl p-4 grid grid-cols-3 gap-2 border-4 border-[#654321] dark:border-[#3D2615] shadow-inner transition-colors duration-500">
+                                    {plots.map((plot, i) => (
+                                        <div 
+                                            key={i} 
+                                            onClick={() => handlePlotClick(i)} 
+                                            className={`relative rounded-lg flex items-center justify-center text-4xl cursor-pointer transition-all duration-300 shadow-sm
+                                                ${plot.watered 
+                                                    ? 'bg-[#5c3a21] dark:bg-[#3d2615]' 
+                                                    : 'bg-[#a06836] dark:bg-[#7a4e28] hover:bg-[#b07846] dark:hover:bg-[#8b5a30]'}`}
+                                        >
+                                            {plot.plantId && !plot.dead && (
+                                                <div className="animate-bounce-short">
+                                                    {plot.growth === 0 ? '🌰' : (plot.growth >= PLANTS[plot.plantId].growTime ? PLANTS[plot.plantId].emoji : PLANTS[plot.plantId].sproutEmoji)}
+                                                </div>
+                                            )}
+                                            {plot.dead && '🥀'}
+                                            {plot.plantId && !plot.watered && !plot.dead && plot.growth < PLANTS[plot.plantId].growTime && (
+                                                <div className="absolute top-1 right-1 w-2 h-2 bg-blue-400 rounded-full shadow-sm animate-pulse"></div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+
+                                {/* Sidebar Tools */}
+                                <div className="flex flex-col gap-4">
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <button 
+                                            onClick={() => setActiveTool('water')} 
+                                            className={`p-2 rounded-lg border-2 flex flex-col items-center transition-all ${activeTool === 'water' ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' : 'border-stone-200 dark:border-stone-700 text-stone-600 dark:text-stone-400 hover:bg-stone-50 dark:hover:bg-stone-700'}`}
+                                        >
+                                            <Icon name="droplet" /> <span className="text-xs mt-1 font-semibold">Podlej</span>
+                                        </button>
+                                        <button 
+                                            onClick={() => setActiveTool('harvest')} 
+                                            className={`p-2 rounded-lg border-2 flex flex-col items-center transition-all ${activeTool === 'harvest' ? 'border-amber-500 bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400' : 'border-stone-200 dark:border-stone-700 text-stone-600 dark:text-stone-400 hover:bg-stone-50 dark:hover:bg-stone-700'}`}
+                                        >
+                                            <Icon name="hand" /> <span className="text-xs mt-1 font-semibold">Zbiory</span>
+                                        </button>
+                                    </div>
+                                    <div className="flex-grow overflow-y-auto max-h-48 custom-scrollbar space-y-2 pr-1">
+                                        {Object.values(PLANTS).map(p => (
+                                            <div 
+                                                key={p.id} 
+                                                onClick={() => setActiveTool(p.id)} 
+                                                className={`p-2 rounded-lg border-2 cursor-pointer flex items-center gap-2 transition-all ${activeTool === p.id ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/30' : 'border-stone-200 dark:border-stone-700 hover:bg-stone-50 dark:hover:bg-stone-700'} ${money < p.price ? 'opacity-50 grayscale cursor-not-allowed' : ''}`}
+                                            >
+                                                <span className="text-xl">{p.emoji}</span>
+                                                <div className="text-xs">
+                                                    <div className="font-bold">{p.name}</div>
+                                                    <div className="text-stone-500 dark:text-stone-400">{p.price} 🪙</div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            {/* Educational Panel */}
+                            <div className="p-4 bg-blue-50 dark:bg-blue-900/20 m-4 rounded-xl flex gap-3 border border-blue-100 dark:border-blue-900/50 shadow-sm transition-colors duration-500">
+                                <Icon name="info" className="text-blue-500 dark:text-blue-400 flex-shrink-0" />
+                                <div>
+                                    <div className="font-bold text-sm text-blue-900 dark:text-blue-300">{eduTitle}</div>
+                                    <p className="text-xs text-blue-800 dark:text-blue-400/80 leading-relaxed">
+                                        {infoText}
+                                    </p>
+                                    <div className="mt-2 text-[10px] text-blue-700/60 dark:text-blue-400/50">
+                                        Gra stworzona przez <a href="https://linktr.ee/kitadamian" target="_blank" className="underline hover:text-blue-900 dark:hover:text-blue-200">Damian Kita</a>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Footer */}
+                        <footer className="mt-8 text-xs text-stone-400 dark:text-stone-500 flex flex-col items-center gap-1 transition-colors duration-500">
+                            <span>Ogródek Działkowy &copy; 2024</span>
+                            <a href="https://linktr.ee/kitadamian" target="_blank" className="hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors font-medium">
+                                Autor: Damian Kita
+                            </a>
+                        </footer>
+                    </div>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
